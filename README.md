@@ -8,25 +8,25 @@
     var fileDictionary = new FileDictionary<int, string>("test.bin", 1024);
     // 添加
     for (int i = 0; i <= 100; i++)
-	{
-		fileDictionary[i] = "bf1ecbbf0a2d38e3d5c7f7ab43524985";
-	}
-	// 查询
-	var value = fileDictionary[100];
+    {
+        fileDictionary[i] = "bf1ecbbf0a2d38e3d5c7f7ab43524985";
+    }
+    // 查询
+    var value = fileDictionary[100];
 
-	// 字典拥有修改和删除，但是使用的时候需要注意性能
+    // 字典拥有修改和删除，但是使用的时候需要注意性能
 
-	// 修改
-	fileDictionary[100] = "new str";
+    // 修改
+    fileDictionary[100] = "new str";
 
-	// 删除
-	fileDictionary.Remove(100);
+    // 删除
+    fileDictionary.Remove(100);
 
-	// 遍历
-	foreach (var item in fileDictionary)
-	{
-		// your code
-	}
+    // 遍历
+    foreach (var item in fileDictionary)
+    {
+        // your code
+    }
 ```
 
 ## 添加新的字典类型
