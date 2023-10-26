@@ -11,14 +11,9 @@ namespace Matix.Collection
         #region member
 
         private IFileDictionaryDelegate<TKey, TValue> funs;
-
-        static byte[] intBuff = new byte[4];
-        const int MOVE_BUFF_SIZE = 4096;
+        
         const int SIZE_COUNT = 2;
         const int MAX_CONFLIGCT_TIME = 8;
-        static byte[] moveTempBuff = new byte[MOVE_BUFF_SIZE];
-
-        static byte[] SerializeTempBuff = new byte[65536];
         private FileStream _fs;
         private string _fileName;
         private int _capacity = 0;
@@ -62,7 +57,7 @@ namespace Matix.Collection
             WriteInt(_size);
 
             int* p;
-            fixed (byte* bp = intBuff)
+            fixed (byte* bp = FileDictionaryUtils.intBuff)
             {
                 p = (int*)bp;
             }
@@ -78,7 +73,7 @@ namespace Matix.Collection
 
                 while (index > _dataOffset)
                 {
-                    int newIndex = index - MOVE_BUFF_SIZE;
+                    int newIndex = index - FileDictionaryUtils.MOVE_BUFF_SIZE;
                     if (_dataOffset > newIndex)
                     {
                         newIndex = _dataOffset;
@@ -87,10 +82,10 @@ namespace Matix.Collection
                     int size = index - newIndex;
 
                     _fs.Seek(newIndex, SeekOrigin.Begin);
-                    _fs.Read(moveTempBuff, 0, size);
+                    _fs.Read(FileDictionaryUtils.moveTempBuff, 0, size);
 
                     _fs.Seek(newIndex + delta, SeekOrigin.Begin);
-                    _fs.Write(moveTempBuff, 0, size);
+                    _fs.Write(FileDictionaryUtils.moveTempBuff, 0, size);
 
                     index = newIndex;
                 }
@@ -106,7 +101,7 @@ namespace Matix.Collection
                 _fs.Seek(4 * SIZE_COUNT, SeekOrigin.Begin);
                 for (int i = 0; i < capacity; i++)
                 {
-                    _fs.Write(intBuff, 0, 4);
+                    _fs.Write(FileDictionaryUtils.intBuff, 0, 4);
                 }
 
                 _dataOffset = (capacity + SIZE_COUNT) * 4;
@@ -129,7 +124,7 @@ namespace Matix.Collection
                 // 开辟空间默认值为-1
                 for (int i = 0; i < capacity; i++)
                 {
-                    _fs.Write(intBuff, 0, 4);
+                    _fs.Write(FileDictionaryUtils.intBuff, 0, 4);
                 }
 
                 _dataOffset = (capacity + SIZE_COUNT) * 4;
@@ -142,10 +137,10 @@ namespace Matix.Collection
 
         private int ReadInt()
         {
-            _fs.Read(intBuff, 0, 4);
+            _fs.Read(FileDictionaryUtils.intBuff, 0, 4);
 
             int* p;
-            fixed (byte* bp = intBuff)
+            fixed (byte* bp = FileDictionaryUtils.intBuff)
             {
                 p = (int*)bp;
             }
@@ -156,14 +151,14 @@ namespace Matix.Collection
         private void WriteInt(int val)
         {
             int* p;
-            fixed (byte* bp = intBuff)
+            fixed (byte* bp = FileDictionaryUtils.intBuff)
             {
                 p = (int*)bp;
             }
 
             *p = val;
 
-            _fs.Write(intBuff, 0, 4);
+            _fs.Write(FileDictionaryUtils.intBuff, 0, 4);
         }
 
         private void ResetVal(int offset)
@@ -174,7 +169,8 @@ namespace Matix.Collection
             }
 
             // 拿到原来的string值
-            TKey key = GetKey(offset);
+            int len;
+            TKey key = GetKey(offset, out len);
 
             DoSetVal(key, offset);
         }
@@ -215,24 +211,22 @@ namespace Matix.Collection
             return false;
         }
 
-        private TKey GetKey(int offset)
+        private TKey GetKey(int offset, out int len)
         {
             TKey value = default(TKey);
             _fs.Seek(offset + _dataOffset, SeekOrigin.Begin);
-            int len = ReadInt();
-            _fs.Read(moveTempBuff, 0, len);
-            value = funs.DeserializeKey(moveTempBuff, 0, len);
-
-            return value;
+            len = ReadInt();
+            return funs.DeserializeKey(_fs, len);
         }
 
-        private bool TryGetValue(TKey key, out TValue value, out int ofs, out int index, out int oldValueLen)
+        private bool TryGetValue(TKey key, out TValue value, out int ofs, out int index, out int oldValueLen, out int keyLen)
         {
             value = default(TValue);
             ofs = 0;
             // 计算CRC32 并计算出来一个索引
             index = (int)(funs.GetHashCode(key) & (_capacity - 1));
             oldValueLen = 0;
+            keyLen = 0;
 
             bool isFind = false;
             TKey k;
@@ -247,15 +241,12 @@ namespace Matix.Collection
                     return false;
                 }
 
-                k = GetKey(offset);
+                k = GetKey(offset, out keyLen);
                 if (k.Equals(key))
                 {
                     ofs = offset;
-                    int len = ReadInt();
-                    _fs.Read(SerializeTempBuff, 0, len);
-                    oldValueLen = len;
-                    //value = System.Text.Encoding.UTF8.GetString(moveTempBuff, 0, len);
-                    value = funs.DeserializeValue(SerializeTempBuff, 0, len);
+                    oldValueLen = ReadInt();
+                    value = funs.DeserializeValue(_fs, oldValueLen);
                     return true;
                 }
             }
@@ -322,11 +313,9 @@ namespace Matix.Collection
             for (int i = 0; i < _size; i++)
             {
                 int len = ReadInt();
-                _fs.Read(SerializeTempBuff, 0, len);
-                var key = funs.DeserializeKey(SerializeTempBuff, 0, len);
+                var key = funs.DeserializeKey(_fs, len);
                 len = ReadInt();
-                _fs.Read(SerializeTempBuff, 0, len);
-                var value = funs.DeserializeValue(SerializeTempBuff, 0, len);
+                var value = funs.DeserializeValue(_fs, len);
 
                 yield return new KeyValuePair<TKey, TValue>(key, value);
             }
@@ -341,37 +330,29 @@ namespace Matix.Collection
         public void Add(TKey key, TValue value)
         {
             TValue oldValue;
-            int offset, index, oldValueLen;
-            bool hasValue = TryGetValue(key, out oldValue, out offset, out index, out oldValueLen);
+            int offset, index, oldValueLen, keyLen;
+            bool hasValue = TryGetValue(key, out oldValue, out offset, out index, out oldValueLen, out keyLen);
             int len = 0;
             if (hasValue)
             {
                 if (oldValue.Equals(value)) return;
             }
-            int newValueLen = funs.SerializeValue(value, SerializeTempBuff);
+            int newValueLen = funs.GetValueLen(value);
             if (hasValue && oldValueLen >= newValueLen)
             {
-                int utf8Len = funs.SerializeKey(key, moveTempBuff);
-                _fs.Seek(offset + _dataOffset + 4 + utf8Len, SeekOrigin.Begin);
-
-                WriteInt(newValueLen);
-                _fs.Write(SerializeTempBuff, 0, newValueLen);
+                _fs.Seek(offset + _dataOffset + 4 + keyLen, SeekOrigin.Begin);
+                funs.SerializeKey(_fs, key);
             }
             else if (hasValue)
             {
                 offset = (int)_fs.Length - _dataOffset;
                 
-                len = funs.SerializeKey(key, SerializeTempBuff);
-                _fs.Seek(offset + _dataOffset, SeekOrigin.Begin);
-                WriteInt(len);
-                _fs.Write(SerializeTempBuff, 0, len);
-                
-                len = funs.SerializeValue(value, SerializeTempBuff);
-                WriteInt(len);
-                _fs.Write(SerializeTempBuff, 0, len);
-
                 _fs.Seek((index + SIZE_COUNT) * 4, SeekOrigin.Begin);
                 WriteInt(offset);
+                
+                _fs.Seek(offset + _dataOffset, SeekOrigin.Begin);
+                funs.SerializeKey(_fs, key);
+                funs.SerializeValue(_fs, value);
             }
             else
             {
@@ -379,17 +360,10 @@ namespace Matix.Collection
                 _fs.Seek(4, SeekOrigin.Begin);
                 WriteInt(_size);
                 offset = (int)_fs.Length - _dataOffset;
-
-                //len = System.Text.Encoding.UTF8.GetBytes(key, 0, key.Length, moveTempBuff, 0);
-                len = funs.SerializeKey(key, SerializeTempBuff);
+                
                 _fs.Seek(offset + _dataOffset, SeekOrigin.Begin);
-                WriteInt(len);
-                _fs.Write(SerializeTempBuff, 0, len);
-
-                //len = System.Text.Encoding.UTF8.GetBytes(value, 0, value.Length, moveTempBuff, 0);
-                len = funs.SerializeValue(value, SerializeTempBuff);
-                WriteInt(len);
-                _fs.Write(SerializeTempBuff, 0, len);
+                funs.SerializeKey(_fs, key);
+                funs.SerializeValue(_fs, value);
 
                 DoSetVal(key, offset);
             }
@@ -448,8 +422,8 @@ namespace Matix.Collection
         public bool Remove(TKey key)
         {
             TValue oldValue;
-            int offset, index, oldLen;
-            bool hasValue = TryGetValue(key, out oldValue, out offset, out index, out oldLen);
+            int offset, index, oldLen, keyLen;
+            bool hasValue = TryGetValue(key, out oldValue, out offset, out index, out oldLen, out keyLen);
             if (hasValue)
             {
                 _fs.Seek((index + SIZE_COUNT) * 4, SeekOrigin.Begin);
@@ -461,8 +435,8 @@ namespace Matix.Collection
 
         public bool TryGetValue(TKey key, out TValue value)
         {
-            int ofs, index, oldLen;
-            return TryGetValue(key, out value, out ofs, out index, out oldLen);
+            int ofs, index, oldLen, keyLen;
+            return TryGetValue(key, out value, out ofs, out index, out oldLen, out keyLen);
         }
 
         public TValue this[TKey key]

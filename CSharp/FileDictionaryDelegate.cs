@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.IO;
+using System.Text;
 
 namespace Matix.Collection
 {
@@ -42,165 +43,139 @@ namespace Matix.Collection
         }
     }
     
-    public interface IFileDictionaryDelegate<TKey, TValue>
+    public unsafe static class FileDictionaryUtils
     {
-        uint GetHashCode(TKey key);
+        public static byte[] intBuff = new byte[4];
 
-        TValue DeserializeValue(byte[] data, int start, int len);
-        int SerializeValue(TValue value, byte[] moveTempBuff);
+        public const int MOVE_BUFF_SIZE = 4096;
 
-        TKey DeserializeKey(byte[] data, int start, int len);
-        int SerializeKey(TKey value, byte[] moveTempBuff);
-    }
-    
-    public class IntStringFileDictionaryDelegate : IFileDictionaryDelegate<int, string>
-    {
-        public static IntStringFileDictionaryDelegate Default = new IntStringFileDictionaryDelegate();
+        public static byte[] moveTempBuff = new byte[MOVE_BUFF_SIZE];
+
+        public static byte[] SerializeTempBuff = new byte[65536];
         
-        public uint GetHashCode(int key)
+        public static void WriteInt(Stream stream, int val)
         {
-            return (uint)key * 2654435761U;
-        }
-
-        public string DeserializeValue(byte[] data, int start, int len)
-        {
-            string value = System.Text.Encoding.UTF8.GetString(data, start, len);
-            return value;
-        }
-
-        public int SerializeValue(string value, byte[] moveTempBuff)
-        {
-            int len = System.Text.Encoding.UTF8.GetBytes(value, 0, value.Length, moveTempBuff, 0);
-            return len;
-        }
-
-        public unsafe int DeserializeKey(byte[] data, int start, int len)
-        {
-            int* intb;
-            fixed (byte* b = data)
+            int* p;
+            fixed (byte* bp = intBuff)
             {
-                intb = (int*)(b + start);
-            }
-            
-            return *intb;
-        }
-
-        public unsafe int SerializeKey(int value, byte[] moveTempBuff)
-        {
-            fixed (byte* b = moveTempBuff)
-            {
-                int* intb = (int*)b;
-                *intb = value;
+                p = (int*)bp;
             }
 
-            return 4;
+            *p = val;
+
+            stream.Write(intBuff, 0, 4);
         }
-    }
-    
-    public class StringStringFileDictionaryDelegate : IFileDictionaryDelegate<string, string>
-    {
-        public static StringStringFileDictionaryDelegate Default = new StringStringFileDictionaryDelegate();
         
-        public uint GetHashCode(string key)
+        public static int ReadInt(Stream stream)
         {
-            var data = System.Text.Encoding.UTF8.GetBytes(key);
-            return CRC32.Compute(data);
-        }
+            stream.Read(intBuff, 0, 4);
 
-        public string DeserializeValue(byte[] data, int start, int len)
-        {
-            string value = System.Text.Encoding.UTF8.GetString(data, start, len);
-            return value;
-        }
-
-        public int SerializeValue(string value, byte[] moveTempBuff)
-        {
-            int len = System.Text.Encoding.UTF8.GetBytes(value, 0, value.Length, moveTempBuff, 0);
-            return len;
-        }
-
-        public string DeserializeKey(byte[] data, int start, int len)
-        {
-            string value = System.Text.Encoding.UTF8.GetString(data, start, len);
-            return value;
-        }
-
-        public int SerializeKey(string key, byte[] moveTempBuff)
-        {
-            int len = System.Text.Encoding.UTF8.GetBytes(key, 0, key.Length, moveTempBuff, 0);
-            return len;
-        }
-    }
-
-    public class IntIntFileDictionaryDelegate : IFileDictionaryDelegate<int, int>
-    {
-        public static IntIntFileDictionaryDelegate Default = new IntIntFileDictionaryDelegate();
-        public static byte[] buffer_cache = new byte[4096];
-        public uint GetHashCode(int key)
-        {
-            return (uint)key * 2654435761U;
-        }
-    
-        public unsafe int DeserializeValue(byte[] data, int start, int len)
-        {
-            int* intb;
-            fixed (byte* b = data)
+            int* p;
+            fixed (byte* bp = intBuff)
             {
-                intb = (int*)b;
+                p = (int*)bp;
+            }
+
+            return *p;
+        }
+        
+        #region int
+        
+        public static int DeserializeInt(Stream stream, int len)
+        {
+            byte[] intBuff = FileDictionaryUtils.intBuff;
+            stream.Read(intBuff, 0, len);
+            
+            int* intb;
+            fixed (byte* b = intBuff)
+            {
+                intb = (int*)(b);
             }
             
             return *intb;
         }
 
-        public unsafe int SerializeValue(int value, byte[] moveTempBuff)
+        public static void SerializeInt(Stream stream, int value)
         {
-            fixed (byte* b = moveTempBuff)
-            {
-                int* intb = (int*)b;
-                *intb = value;
-            }
+            WriteInt(stream, 4);
 
-            return 4;
-        }
-
-        public unsafe int DeserializeKey(byte[] data, int start, int len)
-        {
+            byte[] intBuff = FileDictionaryUtils.intBuff;
             int* intb;
-            fixed (byte* b = data)
+            fixed (byte* b = intBuff)
             {
-                intb = (int*)b;
-            }
-            
-            return *intb;
-        }
-
-        public unsafe int SerializeKey(int value, byte[] moveTempBuff)
-        {
-            fixed (byte* b = moveTempBuff)
-            {
-                int* intb = (int*)b;
+                intb = (int*)(b);
                 *intb = value;
             }
+            stream.Write(intBuff, 0, 4);
+        }
+        #endregion
+        
+        #region byte[]
+        public static byte[] DeserializeBytes(Stream stream, int len)
+        {
+            byte[] result = new byte[len];
+            stream.Read(result, 0, len);
 
-            return 4;
+            return result;
         }
-    }
-    
-    public class IntStringArrayFileDictionaryDelegate : IFileDictionaryDelegate<int, string[]>
-    {
-        public static IntStringArrayFileDictionaryDelegate Default = new IntStringArrayFileDictionaryDelegate();
-        public static byte[] buffer_cache = new byte[4096];
-        public uint GetHashCode(int key)
+
+        public static void SerializeBytes(Stream stream, byte[] value)
         {
-            return (uint)key * 2654435761U;
+            WriteInt(stream, value.Length);
+            stream.Write(value, 0, value.Length);
         }
-    
-        public unsafe string[] DeserializeValue(byte[] data, int start, int len)
+        #endregion
+        
+        #region string
+        
+        public static string DeserializeString(Stream stream, int len)
         {
+            var buff = SerializeTempBuff;
+            if (len > SerializeTempBuff.Length)
+            {
+                buff = new byte[len];
+            }
+
+            stream.Read(buff, 0, len);
+            return System.Text.Encoding.UTF8.GetString(buff, 0, len);
+        }
+        
+        public static void SerializeString(Stream stream, string value)
+        {
+            int len = System.Text.Encoding.UTF8.GetByteCount(value);
+            var buff = SerializeTempBuff;
+            if (len <= SerializeTempBuff.Length)
+            {
+                System.Text.Encoding.UTF8.GetBytes(value, 0, value.Length, buff, 0);
+                WriteInt(stream, len);
+                stream.Write(buff, 0, len);
+            }
+            else
+            {
+                byte[] data = System.Text.Encoding.UTF8.GetBytes(value);
+                WriteInt(stream, data.Length);
+                stream.Write(data, 0, data.Length);
+            }
+        }
+        
+        #endregion
+        
+        #region string[]
+        
+        public static string[] DeserializeStringArray(Stream stream, int len)
+        {
+            byte[] data = SerializeTempBuff;
+
+            if (len > data.Length)
+            {
+                data = new byte[len];
+            }
+
+            stream.Read(data, 0, len);
             string[] result = null;
             fixed (byte* bp = data)
             {
-                byte* p = (bp + start);
+                byte* p = bp;
                 int count = (*(int*)p);
                 p = p + 4;
 
@@ -217,113 +192,303 @@ namespace Matix.Collection
             
             return result;
         }
-
-        public int SerializeValue(string[] value, byte[] moveTempBuff)
+        
+        public static int GetValueLen(string[] value)
         {
-            MemoryStream ms = new MemoryStream(moveTempBuff);
-            BinaryWriter bw = new BinaryWriter(ms);
-
-            int start = 0;
-            bw.Write(value.Length);
-            start += 4;
+            // string len
+            int len = 4;
+            for (int i = 0, imax = value.Length; i < imax; i++)
+            {
+                len += 4 + UTF8Encoding.UTF8.GetByteCount(value[i]);
+            }
+            return len;
+        }
+        
+        public static void SerializeStringArray(Stream stream, string[] value)
+        {
+            WriteInt(stream, GetValueLen(value));
+            WriteInt(stream, value.Length);
             
             for (int i = 0, imax = value.Length; i < imax; i++)
             {
                 var data = System.Text.Encoding.UTF8.GetBytes(value[i]);
-                bw.Write(data.Length);
-                start += 4;
-                bw.Write(data);
-                start += data.Length;
+                WriteInt(stream, data.Length);
+                stream.Write(data, 0, data.Length);
             }
+        }
+        #endregion
+    }
 
-            return start;
+    public interface IFileDictionaryDelegate<TKey, TValue>
+    {
+        uint GetHashCode(TKey key);
+
+        TValue DeserializeValue(Stream stream, int len);
+        
+        int GetValueLen(TValue value);
+        
+        void SerializeValue(Stream stream, TValue value);
+
+        TKey DeserializeKey(Stream stream, int len);
+        void SerializeKey(Stream stream, TKey value);
+    }
+
+    public class IntBytesFileDictionaryDelegate : IFileDictionaryDelegate<int, byte[]>
+    {
+        public static IntBytesFileDictionaryDelegate Default = new IntBytesFileDictionaryDelegate();
+        public uint GetHashCode(int key)
+        {
+            return (uint)key * 2654435761U;
         }
 
-        public unsafe int DeserializeKey(byte[] data, int start, int len)
+        public int GetValueLen(byte[] value)
         {
-            int* intb;
-            fixed (byte* b = data)
-            {
-                intb = (int*)(b + start);
-            }
-            
-            return *intb;
+            return value.Length;
         }
 
-        public unsafe int SerializeKey(int value, byte[] moveTempBuff)
+        public byte[] DeserializeValue(Stream stream, int len)
         {
-            fixed (byte* b = moveTempBuff)
-            {
-                int* intb = (int*)b;
-                *intb = value;
-            }
+            return FileDictionaryUtils.DeserializeBytes(stream, len);
+        }
 
-            return 4;
+        public void SerializeValue(Stream stream, byte[] value)
+        {
+            FileDictionaryUtils.SerializeBytes(stream, value);
+        }
+
+        public int DeserializeKey(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeInt(stream, len);
+        }
+
+        public void SerializeKey(Stream stream, int value)
+        {
+            FileDictionaryUtils.SerializeInt(stream, value);
         }
     }
-    
-    public class StringStringArrayFileDictionaryDelegate : IFileDictionaryDelegate<string, string[]>
+
+    public class StringBytesFileDictionaryDelegate : IFileDictionaryDelegate<string, byte[]>
     {
-        public static StringStringArrayFileDictionaryDelegate Default = new StringStringArrayFileDictionaryDelegate();
-        public static byte[] buffer_cache = new byte[4096];
+        public static StringBytesFileDictionaryDelegate Default = new StringBytesFileDictionaryDelegate();
+
         public uint GetHashCode(string key)
         {
             var data = System.Text.Encoding.UTF8.GetBytes(key);
             return CRC32.Compute(data);
         }
-    
-        public string[] DeserializeValue(byte[] data, int start, int len)
+
+        public int GetValueLen(byte[] value)
         {
-            MemoryStream ms = new MemoryStream(data);
-            BinaryReader br = new BinaryReader(ms);
-            int count = br.ReadInt32();
-
-            string[] result = new string[count];
-
-            for (int i = 0; i < count; i++)
-            {
-                int strLen = br.ReadInt32();
-                br.Read(buffer_cache, 0, strLen);
-                result[i] = System.Text.Encoding.UTF8.GetString(buffer_cache, 0, strLen);
-            }
-            
-            br.Close();
-            
-            return result;
+            return value.Length;
         }
 
-        public int SerializeValue(string[] value, byte[] moveTempBuff)
+        public byte[] DeserializeValue(Stream stream, int len)
         {
-            MemoryStream ms = new MemoryStream(moveTempBuff);
-            BinaryWriter bw = new BinaryWriter(ms);
+            return FileDictionaryUtils.DeserializeBytes(stream, len);
+        }
 
-            int start = 0;
-            bw.Write(value.Length);
-            start += 4;
-            
+        public void SerializeValue(Stream stream, byte[] value)
+        {
+            FileDictionaryUtils.SerializeBytes(stream, value);
+        }
+
+        string IFileDictionaryDelegate<string, byte[]>.DeserializeKey(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeString(stream, len);
+        }
+
+        public void SerializeKey(Stream stream, string value)
+        {
+            FileDictionaryUtils.SerializeString(stream, value);
+        }
+        
+    }
+    
+    public class IntStringFileDictionaryDelegate : IFileDictionaryDelegate<int, string>
+    {
+        public static IntStringFileDictionaryDelegate Default = new IntStringFileDictionaryDelegate();
+        
+        public uint GetHashCode(int key)
+        {
+            return (uint)key * 2654435761U;
+        }
+        
+        public int GetValueLen(string value)
+        {
+            return System.Text.Encoding.UTF8.GetByteCount(value);
+        }
+
+        public string DeserializeValue(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeString(stream, len);
+        }
+        
+        public void SerializeValue(Stream stream, string value)
+        {
+            FileDictionaryUtils.SerializeString(stream, value);
+        }
+
+        public int DeserializeKey(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeInt(stream, len);
+        }
+
+        public void SerializeKey(Stream stream, int value)
+        {
+            FileDictionaryUtils.SerializeInt(stream, value);
+        }
+    }
+    
+    public class StringStringFileDictionaryDelegate : IFileDictionaryDelegate<string, string>
+    {
+        public static StringStringFileDictionaryDelegate Default = new StringStringFileDictionaryDelegate();
+        
+        public uint GetHashCode(string key)
+        {
+            var data = System.Text.Encoding.UTF8.GetBytes(key);
+            return CRC32.Compute(data);
+        }
+
+        public int GetValueLen(string value)
+        {
+            return System.Text.Encoding.UTF8.GetByteCount(value);
+        }
+
+        public string DeserializeValue(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeString(stream, len);
+        }
+        
+        public void SerializeValue(Stream stream, string value)
+        {
+            FileDictionaryUtils.SerializeString(stream, value);
+        }
+
+        public string DeserializeKey(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeString(stream, len);
+        }
+
+        public void SerializeKey(Stream stream, string value)
+        {
+            FileDictionaryUtils.SerializeString(stream, value);
+        }
+    }
+
+    public class IntIntFileDictionaryDelegate : IFileDictionaryDelegate<int, int>
+    {
+        public static IntIntFileDictionaryDelegate Default = new IntIntFileDictionaryDelegate();
+        public uint GetHashCode(int key)
+        {
+            return (uint)key * 2654435761U;
+        }
+
+        public int DeserializeValue(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeInt(stream, len);
+        }
+
+        public int GetValueLen(int value)
+        {
+            return 4;
+        }
+
+        public void SerializeValue(Stream stream, int value)
+        {
+            FileDictionaryUtils.SerializeInt(stream, value);
+        }
+
+        public int DeserializeKey(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeInt(stream, len);
+        }
+
+        public void SerializeKey(Stream stream, int value)
+        {
+            FileDictionaryUtils.SerializeInt(stream, value);
+        }
+        
+    }
+    
+    public class IntStringArrayFileDictionaryDelegate : IFileDictionaryDelegate<int, string[]>
+    {
+        public static IntStringArrayFileDictionaryDelegate Default = new IntStringArrayFileDictionaryDelegate();
+        public uint GetHashCode(int key)
+        {
+            return (uint)key * 2654435761U;
+        }
+
+        public string[] DeserializeValue(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeStringArray(stream, len);
+        }
+
+        public int GetValueLen(string[] value)
+        {
+            // string len
+            int len = 4;
             for (int i = 0, imax = value.Length; i < imax; i++)
             {
-                start += 4;
-                int len = System.Text.Encoding.UTF8.GetBytes(value[i], 0, value[i].Length, moveTempBuff, start);
-                bw.Write(len);
-    
-                bw.Seek(len, SeekOrigin.Current);
-                start += len;
+                len += 4 + UTF8Encoding.UTF8.GetByteCount(value[i]);
             }
-
-            return start;
-        }
-
-        public string DeserializeKey(byte[] data, int start, int len)
-        {
-            string value = System.Text.Encoding.UTF8.GetString(data, start, len);
-            return value;
-        }
-
-        public int SerializeKey(string key, byte[] moveTempBuff)
-        {
-            int len = System.Text.Encoding.UTF8.GetBytes(key, 0, key.Length, moveTempBuff, 0);
             return len;
+        }
+
+        public void SerializeValue(Stream stream, string[] value)
+        {
+            FileDictionaryUtils.SerializeStringArray(stream, value);
+        }
+
+        public int DeserializeKey(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeInt(stream, len);
+        }
+
+        public void SerializeKey(Stream stream, int value)
+        {
+            FileDictionaryUtils.SerializeInt(stream, value);
+        }
+        
+    }
+    
+    public class StringStringArrayFileDictionaryDelegate : IFileDictionaryDelegate<string, string[]>
+    {
+        public static StringStringArrayFileDictionaryDelegate Default = new StringStringArrayFileDictionaryDelegate();
+        public uint GetHashCode(string key)
+        {
+            var data = System.Text.Encoding.UTF8.GetBytes(key);
+            return CRC32.Compute(data);
+        }
+
+        public string[] DeserializeValue(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeStringArray(stream, len);
+        }
+
+        public int GetValueLen(string[] value)
+        {
+            // string len
+            int len = 4;
+            for (int i = 0, imax = value.Length; i < imax; i++)
+            {
+                len += 4 + UTF8Encoding.UTF8.GetByteCount(value[i]);
+            }
+            return len;
+        }
+
+        public void SerializeValue(Stream stream, string[] value)
+        {
+            FileDictionaryUtils.SerializeStringArray(stream, value);
+        }
+
+        public string DeserializeKey(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeString(stream, len);
+        }
+
+        public void SerializeKey(Stream stream, string value)
+        {
+            FileDictionaryUtils.SerializeString(stream, value);
         }
     }
     
@@ -331,9 +496,14 @@ namespace Matix.Collection
     {
         public static IFileDictionaryDelegate<TKey, TValue> GetFileDictionaryDelegate<TKey, TValue>()
         {
+            if (typeof(TKey) == typeof(int) && typeof(TValue) == typeof(byte[]))
+                return (IFileDictionaryDelegate<TKey, TValue>)IntBytesFileDictionaryDelegate.Default;
+            
+            if (typeof(TKey) == typeof(string) && typeof(TValue) == typeof(byte[]))
+                return (IFileDictionaryDelegate<TKey, TValue>)StringBytesFileDictionaryDelegate.Default;
+            
             if (typeof(TKey) == typeof(string) && typeof(TValue) == typeof(string))
                 return (IFileDictionaryDelegate<TKey, TValue>)StringStringFileDictionaryDelegate.Default;
-            
             
             if (typeof(TKey) == typeof(string) && typeof(TValue) == typeof(string[]))
                 return (IFileDictionaryDelegate<TKey, TValue>)StringStringArrayFileDictionaryDelegate.Default;
