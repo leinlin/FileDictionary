@@ -392,6 +392,24 @@ namespace Matix.Collection
             return ContainsKey(item.Key);
         }
 
+        public Dictionary<TKey, TValue> ToDictionary()
+        {
+            Dictionary<TKey, TValue> result = new Dictionary<TKey, TValue>(_size);
+            _fs.Seek(_dataOffset, SeekOrigin.Begin);
+            
+            for (int i = 0; i < _size; i++)
+            {
+                int len = ReadInt();
+                var key = funs.DeserializeKey(_fs, len);
+                len = ReadInt();
+                var value = funs.DeserializeValue(_fs, len);
+
+                result.Add(key, value);
+            }
+
+            return result;
+        }
+
         public void CopyTo(KeyValuePair<TKey, TValue>[] array, int arrayIndex)
         {
             throw new NotImplementedException();
