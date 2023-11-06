@@ -131,9 +131,9 @@ function FileDictionary:ctor(path, capacity)
     local fs
     if capacity then
         if not fileExit then
-            fs = io.open(path, "wb+")
+            fs = io.open(path, "w+b")
         else
-            fs = io.open(path, "rb+")
+            fs = io.open(path, "r+b")
         end
     else
         fs = io.open(path, "rb")
