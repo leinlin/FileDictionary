@@ -2,8 +2,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Text;
 
-namespace Matix.Collection
+namespace ATRI.Collection
 {
     public unsafe class FileDictionary<TKey, TValue> : IDictionary<TKey, TValue>
         where TKey : IEquatable<TKey>
@@ -91,20 +92,20 @@ namespace Matix.Collection
                 }
 
                 // 把索引区的数据都读取到内存中
-                byte[] oldData = new byte[4 * _capacity];
+                byte[] oldData = new byte[4 * (_capacity + MAX_CONFLIGCT_TIME)];
                 int* oldDataPoint = null;
 
                 _fs.Seek(4 * SIZE_COUNT, SeekOrigin.Begin);
-                _fs.Read(oldData, 0, 4 * _capacity);
+                _fs.Read(oldData, 0, 4 * (_capacity + MAX_CONFLIGCT_TIME));
 
                 // 开辟空间,并把索引区数据全部改成-1
                 _fs.Seek(4 * SIZE_COUNT, SeekOrigin.Begin);
-                for (int i = 0; i < capacity; i++)
+                for (int i = 0; i < capacity + MAX_CONFLIGCT_TIME; i++)
                 {
                     _fs.Write(FileDictionaryUtils.intBuff, 0, 4);
                 }
 
-                _dataOffset = (capacity + SIZE_COUNT) * 4;
+                _dataOffset = (capacity + SIZE_COUNT + MAX_CONFLIGCT_TIME) * 4;
                 int oldCapacity = _capacity;
                 _capacity = capacity;
                 // 重新插入 索引区数据
@@ -113,7 +114,7 @@ namespace Matix.Collection
                     oldDataPoint = (int*)b;
                 }
 
-                for (int i = 0; i < oldCapacity; i++)
+                for (int i = 0; i < oldCapacity + MAX_CONFLIGCT_TIME; i++)
                 {
                     int offset = *(oldDataPoint + i);
                     ResetVal(offset);
@@ -122,12 +123,12 @@ namespace Matix.Collection
             else
             {
                 // 开辟空间默认值为-1
-                for (int i = 0; i < capacity; i++)
+                for (int i = 0; i < capacity + MAX_CONFLIGCT_TIME; i++)
                 {
                     _fs.Write(FileDictionaryUtils.intBuff, 0, 4);
                 }
 
-                _dataOffset = (capacity + SIZE_COUNT) * 4;
+                _dataOffset = (capacity + SIZE_COUNT + MAX_CONFLIGCT_TIME) * 4;
                 _capacity = capacity;
                 _size = 0;
             }
@@ -175,7 +176,7 @@ namespace Matix.Collection
             DoSetVal(key, offset);
         }
 
-        private void DoSetVal(TKey key, int offset)
+        private void DoSetVal(TKey key, int offset, int resizeTime = 0)
         {
             // 计算CRC32 并计算出来一个索引
             int index = (int)(funs.GetHashCode(key) & (_capacity - 1));
@@ -183,7 +184,8 @@ namespace Matix.Collection
             bool isReset = false;
             for (int i = 0; i < MAX_CONFLIGCT_TIME; i++)
             {
-                if (SetVal(index + i, offset))
+                int ii = index + i;
+                if (SetVal(ii, offset))
                 {
                     isReset = true;
                     break;
@@ -192,8 +194,31 @@ namespace Matix.Collection
 
             if (!isReset)
             {
-                Resize(_capacity * 2);
-                DoSetVal(key, offset);
+                if (resizeTime > 4)
+                {
+                    StringBuilder sb = new StringBuilder();
+                    sb.Append("hash code conflict is too high,you can change hashcode,values:");
+                    for (int i = 0; i < MAX_CONFLIGCT_TIME; i++)
+                    {
+                        int ii = index + i;
+                        _fs.Seek((ii + SIZE_COUNT) * 4, SeekOrigin.Begin);
+                        int addr = ReadInt();
+                        int keyLen = 0;
+                        var k = GetKey(addr, out keyLen);
+                        sb.Append(k);
+                        sb.Append(",");
+                    }
+                    sb.Append(key);
+                    throw new Exception(sb.ToString());
+                }
+                else
+                {
+                    Resize(_capacity * 2);
+                    resizeTime++;
+                }
+
+
+                DoSetVal(key, offset, resizeTime);
             }
         }
 
@@ -233,7 +258,8 @@ namespace Matix.Collection
             int offset;
             for (int i = 0; i < MAX_CONFLIGCT_TIME; i++)
             {
-                _fs.Seek((index + i + SIZE_COUNT) * 4, SeekOrigin.Begin);
+                int ii = index + i;
+                _fs.Seek((ii + SIZE_COUNT) * 4, SeekOrigin.Begin);
                 offset = ReadInt();
                 // 没有值
                 if (offset < 0)
@@ -259,7 +285,7 @@ namespace Matix.Collection
         #region public
 
         // 文件存在就从文件里面读取 capacity，文件不存在就用capacity new 一个 文件hash表出来
-        public FileDictionary(string fileName, int capacity, bool isClear = false)
+        public FileDictionary(string fileName, int capacity = 1024, bool isClear = false)
         {
             bool fileExit = File.Exists(fileName);
             if (isClear && fileExit)
@@ -279,6 +305,7 @@ namespace Matix.Collection
             // 文件不存在就先写入点东西
             if (!fileExit)
             {
+                //capacity = Math.Max(1024, capacity);
                 capacity = FindNextPowerOfTwo(capacity);
                 Resize(capacity);
             }
@@ -286,7 +313,7 @@ namespace Matix.Collection
             {
                 _capacity = ReadInt();
                 _size = ReadInt();
-                _dataOffset = (_capacity + SIZE_COUNT) * 4;
+                _dataOffset = (_capacity + SIZE_COUNT + MAX_CONFLIGCT_TIME) * 4;
             }
         }
 
@@ -341,7 +368,7 @@ namespace Matix.Collection
             if (hasValue && oldValueLen >= newValueLen)
             {
                 _fs.Seek(offset + _dataOffset + 4 + keyLen, SeekOrigin.Begin);
-                funs.SerializeKey(_fs, key);
+                funs.SerializeValue(_fs, value);
             }
             else if (hasValue)
             {
@@ -373,6 +400,14 @@ namespace Matix.Collection
         {
             Add(item.Key, item.Value);
         }
+        
+        public void Add(IDictionary<TKey, TValue> dict)
+        {
+            foreach (var item in dict)
+            {
+                Add(item.Key, item.Value);
+            }
+        }
 
         public void Clear()
         {
@@ -390,24 +425,6 @@ namespace Matix.Collection
         public bool Contains(KeyValuePair<TKey, TValue> item)
         {
             return ContainsKey(item.Key);
-        }
-
-        public Dictionary<TKey, TValue> ToDictionary()
-        {
-            Dictionary<TKey, TValue> result = new Dictionary<TKey, TValue>(_size);
-            _fs.Seek(_dataOffset, SeekOrigin.Begin);
-            
-            for (int i = 0; i < _size; i++)
-            {
-                int len = ReadInt();
-                var key = funs.DeserializeKey(_fs, len);
-                len = ReadInt();
-                var value = funs.DeserializeValue(_fs, len);
-
-                result.Add(key, value);
-            }
-
-            return result;
         }
 
         public void CopyTo(KeyValuePair<TKey, TValue>[] array, int arrayIndex)
@@ -446,6 +463,9 @@ namespace Matix.Collection
             {
                 _fs.Seek((index + SIZE_COUNT) * 4, SeekOrigin.Begin);
                 WriteInt(-1);
+                _size--;
+                _fs.Seek(4, SeekOrigin.Begin);
+                WriteInt(_size);
             }
 
             return hasValue;
@@ -471,6 +491,24 @@ namespace Matix.Collection
                 return value;
             }
             set { Add(key, value); }
+        }
+
+        public Dictionary<TKey, TValue> ToDictionary()
+        {
+            Dictionary<TKey, TValue> result = new Dictionary<TKey, TValue>(Count);
+            _fs.Seek(_dataOffset, SeekOrigin.Begin);
+            
+            for (int i = 0; i < _size; i++)
+            {
+                int len = ReadInt();
+                var key = funs.DeserializeKey(_fs, len);
+                len = ReadInt();
+                var value = funs.DeserializeValue(_fs, len);
+
+                result.Add(key, value);
+            }
+
+            return result;
         }
 
         public ICollection<TKey> Keys

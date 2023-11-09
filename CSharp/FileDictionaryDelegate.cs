@@ -2,7 +2,7 @@
 using System.IO;
 using System.Text;
 
-namespace Matix.Collection
+namespace ATRI.Collection
 {
     public class CRC32
     {
