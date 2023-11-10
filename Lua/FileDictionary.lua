@@ -1,17 +1,14 @@
 
-local function class(className, super)
+local function array_class()
     -- 构建类
-    local clazz = { __cname = className, super = super }
-    if super then
-        -- 设置类的元表，此类中没有的，可以查找父类是否含有
-        setmetatable(clazz, { __index = super })
-    end
+    local clazz = {}
+    local meta = { __index = clazz }
     -- new 方法创建类对象
     clazz.new = function(...)
         -- 构造一个对象
         local instance = {}
         -- 设置对象的元表为当前类，这样，对象就可以调用当前类生命的方法了
-        setmetatable(instance, { __index = clazz })
+        setmetatable(instance, meta)
         if clazz.ctor then
             clazz.ctor(instance, ...)
         end
@@ -133,7 +130,7 @@ local DEFAULT_VALUE = 0xFFFFFFFF
 ---@field protected _dataOffset number
 
 ---@type FileDictionary
-local FileDictionary = class("FileDictionary")
+local FileDictionary = array_class()
 
 local function FileExit(path)
     local fs = io.open(path, "rb")
