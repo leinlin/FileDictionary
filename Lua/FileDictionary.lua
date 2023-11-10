@@ -519,7 +519,7 @@ function FileDictionary:ToLuaTable()
 end
 
 -- 注意这里面如果数据被修改 删除过 会报错
-function FileDictionary:pairs()
+function FileDictionary:ipairs()
     if not self._fs then
         error("file not exit")
         return false
