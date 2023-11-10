@@ -21,12 +21,31 @@ local function class(className, super)
 end
 
 local floor = math.floor
-local bit32 = require("bit")
-local lshift = bit32.lshift
-local rshift = bit32.rshift
-local bxor = bit32.bxor
-local band = bit32.band
-local bnot = bit32.bnot
+local lshift
+local rshift
+local bxor
+local band
+local bnot
+
+local wb = "w+b"
+local rb = "r+b"
+
+if jit then
+    bit32 = require("bit")
+    lshift = bit32.lshift
+    rshift = bit32.rshift
+    bxor = bit32.bxor
+    band = bit32.band
+    bnot = bit32.bnot
+    wb = "wb+"
+    rb = "rb+"
+else
+    lshift = function(a, b) return a << b end
+    rshift = function(a, b) return a >> b end
+    bxor = function(a, b) return a ~ b end
+    band = function(a, b) return a & b end
+    bnot = function(a) return ~a end
+end
 local strByte = string.byte
 local strChar = string.char
 local strLen = string.len
@@ -38,9 +57,9 @@ for i = 0, 255 do
     local crc = i
     for j = 1, 8 do
         if crc % 2 == 1 then
-            crc = bit32.bxor(0xEDB88320, bit32.rshift(crc, 1))
+            crc = bxor(0xEDB88320, rshift(crc, 1))
         else
-            crc = bit32.rshift(crc, 1)
+            crc = rshift(crc, 1)
         end
     end
     crc32_table[i] = crc
@@ -126,14 +145,18 @@ end
 
 
 function FileDictionary:ctor(path, capacity)
+    self:Open(path, capacity)
+end
+
+function FileDictionary:Open(path, capacity, isClear)
     local fileExit = FileExit(path)
     ---@type file
     local fs
     if capacity then
-        if not fileExit then
-            fs = io.open(path, "w+b")
+        if not fileExit or isClear then
+            fs = io.open(path, wb)
         else
-            fs = io.open(path, "r+b")
+            fs = io.open(path, rb)
         end
     else
         fs = io.open(path, "rb")
@@ -144,7 +167,7 @@ function FileDictionary:ctor(path, capacity)
         self._capacity = self:ReadInt()
         self._capacity_ = self._capacity - 1
         self._size = self:ReadInt()
-        self._dataOffset = (self._capacity + SIZE_COUNT) * 4
+        self._dataOffset = (self._capacity + SIZE_COUNT + MAX_CONFLIGCT_TIME) * 4
     elseif capacity then
         self._fs = fs
         self._capacity = 0
@@ -231,14 +254,14 @@ function FileDictionary:Resize(capacity)
         -- 把索引区的数据都读取到内存中
 
         _fs:seek("set", 4 * SIZE_COUNT)
-        local oldData = _fs:read(4 * _capacity)
+        local oldData = _fs:read(4 * (_capacity + MAX_CONFLIGCT_TIME))
         -- 开辟空间,并把索引区数据全部改成-1
         _fs:seek("set", 4 * SIZE_COUNT)
-        for _ = 0,capacity - 1 do
+        for _ = 1,capacity + MAX_CONFLIGCT_TIME do
             _fs:write(INIT_BUFF)
         end
 
-        self._dataOffset = (capacity + SIZE_COUNT) * 4
+        self._dataOffset = (capacity + SIZE_COUNT + MAX_CONFLIGCT_TIME) * 4
         self._capacity = capacity
         self._capacity_ = self._capacity - 1
         -- 重新插入 索引区数据
@@ -251,10 +274,10 @@ function FileDictionary:Resize(capacity)
         end
     else
         -- 开辟空间默认值为-1
-        for _ = 1,capacity do
+        for _ = 1,capacity + MAX_CONFLIGCT_TIME do
             _fs:write(INIT_BUFF)
         end
-        self._dataOffset = (capacity + SIZE_COUNT) * 4;
+        self._dataOffset = (capacity + SIZE_COUNT + MAX_CONFLIGCT_TIME) * 4;
         self._capacity = capacity
         self._capacity_ = self._capacity - 1
         self._size = 0;
@@ -336,7 +359,7 @@ function FileDictionary:TryGetValue(key)
     for i = 0,MAX_CONFLIGCT_TIME do
         fs:seek("set", (index + i + SIZE_COUNT) * 4)
         offset = ReadInt(self)
-        
+
         if (offset == DEFAULT_VALUE) then
             return false
         end
