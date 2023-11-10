@@ -20,7 +20,6 @@ local function class(className, super)
     return clazz
 end
 
-local floor = math.floor
 local lshift
 local rshift
 local bxor
@@ -31,7 +30,7 @@ local wb = "w+b"
 local rb = "r+b"
 
 if jit then
-    bit32 = require("bit")
+    local bit32 = require("bit")
     lshift = bit32.lshift
     rshift = bit32.rshift
     bxor = bit32.bxor
@@ -40,11 +39,12 @@ if jit then
     wb = "wb+"
     rb = "rb+"
 else
-    lshift = function(a, b) return a << b end
-    rshift = function(a, b) return a >> b end
-    bxor = function(a, b) return a ~ b end
-    band = function(a, b) return a & b end
-    bnot = function(a) return ~a end
+    -- lua 5.1写 移位计算 会报语法错误，所以直接用dostring绕过去
+    lshift =  load([[return function(a, b) return a << b end]])()
+    rshift = load([[return function(a, b) return a >> b end]])()
+    bxor = load([[return function(a, b) return a ~ b end]])()
+    band = load([[return function(a, b) return a & b end]])()
+    bnot = load([[return function(a) return ~a end]])()
 end
 local strByte = string.byte
 local strChar = string.char
@@ -144,8 +144,8 @@ local function FileExit(path)
 end
 
 
-function FileDictionary:ctor(path, capacity)
-    self:Open(path, capacity)
+function FileDictionary:ctor(path, capacity, isClear)
+    self:Open(path, capacity, isClear)
 end
 
 function FileDictionary:Open(path, capacity, isClear)
@@ -155,6 +155,7 @@ function FileDictionary:Open(path, capacity, isClear)
     if capacity then
         if not fileExit or isClear then
             fs = io.open(path, wb)
+            fileExit = false
         else
             fs = io.open(path, rb)
         end
@@ -162,6 +163,7 @@ function FileDictionary:Open(path, capacity, isClear)
         fs = io.open(path, "rb")
     end
 
+    self.isNumberKey = true
     if fileExit then
         self._fs = fs
         self._capacity = self:ReadInt()
@@ -176,6 +178,10 @@ function FileDictionary:Open(path, capacity, isClear)
         capacity = self:FindNextPowerOfTwo(capacity)
         self:Resize(capacity)
     end
+end
+
+function FileDictionary:SetKeyString()
+    self.isNumberKey = false
 end
 
 ---@private
@@ -453,6 +459,8 @@ function FileDictionary:RemoveKey(key)
         self._fs:seek("set", (index + SIZE_COUNT) * 4)
         WriteInt(self, DEFAULT_VALUE)
         self._size = self._size - 1
+        self._fs:seek("set",  4)
+        WriteInt(self, self._size)
     end
 end
 
@@ -483,11 +491,73 @@ function FileDictionary:ToLuaTable()
     return tb
 end
 
+function FileDictionary:ToLuaTable()
+    if not self._fs then
+        error("file not exit")
+        return false
+    end
+
+    local fs = self._fs
+    local _capacity = self._capacity
+    local _dataOffset = self._dataOffset
+
+    local tb = {}
+    for i = 0,_capacity - 1 do
+        fs:seek("set", 4 * (SIZE_COUNT + i))
+        local offset = String2Int(fs:read(4))
+        if (offset ~= DEFAULT_VALUE) then
+            fs:seek("set", offset + _dataOffset)
+            local len = ReadInt(self)
+            local key = fs:read(len)
+            len = ReadInt(self)
+            local value = fs:read(len)
+            tb[key] = value
+        end
+    end
+
+    return tb
+end
+
+-- 注意这里面如果数据被修改 删除过 会报错
+function FileDictionary:pairs()
+    if not self._fs then
+        error("file not exit")
+        return false
+    end
+
+    local fs = self._fs
+    local _dataOffset = self._dataOffset
+
+    local i = 1
+    local count = self._size
+    local offset = _dataOffset
+    -- 闭包函数
+    return function ()
+        if i > count then
+            return
+        end
+        fs:seek("set", offset)
+        local len = ReadInt(self)
+        local key = fs:read(len)
+        if self.isNumberKey then
+            key = String2Int(key)
+        end
+        offset = offset + len + 4
+        len = ReadInt(self)
+        local value = fs:read(len)
+        offset = offset + len + 4
+        i = i + 1
+
+        return key,value
+    end
+ end
+
 function FileDictionary:Close()
     if self._fs then
         self._fs:close()
     end
 end
+
 
 ---endregion
 
