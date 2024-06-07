@@ -3,10 +3,11 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
+using UnityEngine;
 
 namespace ATRI.Collection
 {
-    public unsafe class FileDictionary<TKey, TValue> : IDictionary<TKey, TValue>
+    public unsafe class FileDictionary<TKey, TValue> : IDictionary<TKey, TValue>,IDisposable
         where TKey : IEquatable<TKey>
     {
         #region member
@@ -15,7 +16,7 @@ namespace ATRI.Collection
         
         const int SIZE_COUNT = 2;
         const int MAX_CONFLIGCT_TIME = 8;
-        private FileStream _fs;
+        private Stream _stream;
         private string _fileName;
         private int _capacity = 0;
         private int _dataOffset = 0;
@@ -25,13 +26,57 @@ namespace ATRI.Collection
 
         ~FileDictionary()
         {
-            if (_fs != null)
+            Dispose(false);
+        }
+
+        #region cache
+
+        private const int CACHE_COUNT = 256;
+        private Dictionary<TKey, LinkedListNode<KeyValuePair<TKey, TValue>>> _cache = new Dictionary<TKey, LinkedListNode<KeyValuePair<TKey, TValue>>>(CACHE_COUNT);
+        private LinkedList<KeyValuePair<TKey, TValue>> _lruQueue = new LinkedList<KeyValuePair<TKey, TValue>>();
+        private ICollection _keys;
+        private ICollection _values;
+
+        private bool TryGetCache(TKey key, out TValue value)
+        {
+            LinkedListNode<KeyValuePair<TKey, TValue>> ln;
+            bool ret = _cache.TryGetValue(key, out ln);
+
+            if (ret)
             {
-                _fs.Flush();
-                _fs.Close();
+                value = ln.Value.Value;
+                _lruQueue.Remove(ln);
+                _lruQueue.AddLast(ln);
+            }
+            else
+            {
+                value = default(TValue);
+            }
+
+            return ret;
+        }
+
+        private void AddToCache(TKey key, TValue value)
+        {
+            if (_lruQueue.Count >= CACHE_COUNT)
+            {
+                var first = _lruQueue.First;
+                _lruQueue.RemoveFirst();
+                
+                first.Value = new KeyValuePair<TKey, TValue>(key, value);
+                _cache.Add(key, first);
+                _lruQueue.AddLast(first);
+            }
+            else
+            {
+                LinkedListNode<KeyValuePair<TKey, TValue>>  lruNode = new LinkedListNode<KeyValuePair<TKey, TValue>>(new KeyValuePair<TKey, TValue>(key, value));
+                _cache.Add(key, lruNode);
+                _lruQueue.AddLast(lruNode);
             }
         }
 
+        #endregion
+        
         #region private
 
         public static int FindNextPowerOfTwo(int number)
@@ -52,7 +97,7 @@ namespace ATRI.Collection
 
         private void Resize(int capacity)
         {
-            _fs.Seek(0, SeekOrigin.Begin);
+            _stream.Seek(0, SeekOrigin.Begin);
             // 写入capacity
             WriteInt(capacity);
             WriteInt(_size);
@@ -68,7 +113,7 @@ namespace ATRI.Collection
             if (_dataOffset != 0) // 不是第一次resize
             {
                 // 移动数据区的数据
-                int endIndex = (int)_fs.Length;
+                int endIndex = (int)_stream.Length;
                 int delta = (capacity - _capacity) * 4;
                 int index = endIndex;
 
@@ -82,11 +127,11 @@ namespace ATRI.Collection
 
                     int size = index - newIndex;
 
-                    _fs.Seek(newIndex, SeekOrigin.Begin);
-                    _fs.Read(FileDictionaryUtils.moveTempBuff, 0, size);
+                    _stream.Seek(newIndex, SeekOrigin.Begin);
+                    _stream.Read(FileDictionaryUtils.moveTempBuff, 0, size);
 
-                    _fs.Seek(newIndex + delta, SeekOrigin.Begin);
-                    _fs.Write(FileDictionaryUtils.moveTempBuff, 0, size);
+                    _stream.Seek(newIndex + delta, SeekOrigin.Begin);
+                    _stream.Write(FileDictionaryUtils.moveTempBuff, 0, size);
 
                     index = newIndex;
                 }
@@ -95,14 +140,14 @@ namespace ATRI.Collection
                 byte[] oldData = new byte[4 * (_capacity + MAX_CONFLIGCT_TIME)];
                 int* oldDataPoint = null;
 
-                _fs.Seek(4 * SIZE_COUNT, SeekOrigin.Begin);
-                _fs.Read(oldData, 0, 4 * (_capacity + MAX_CONFLIGCT_TIME));
+                _stream.Seek(4 * SIZE_COUNT, SeekOrigin.Begin);
+                _stream.Read(oldData, 0, 4 * (_capacity + MAX_CONFLIGCT_TIME));
 
                 // 开辟空间,并把索引区数据全部改成-1
-                _fs.Seek(4 * SIZE_COUNT, SeekOrigin.Begin);
+                _stream.Seek(4 * SIZE_COUNT, SeekOrigin.Begin);
                 for (int i = 0; i < capacity + MAX_CONFLIGCT_TIME; i++)
                 {
-                    _fs.Write(FileDictionaryUtils.intBuff, 0, 4);
+                    _stream.Write(FileDictionaryUtils.intBuff, 0, 4);
                 }
 
                 _dataOffset = (capacity + SIZE_COUNT + MAX_CONFLIGCT_TIME) * 4;
@@ -125,7 +170,7 @@ namespace ATRI.Collection
                 // 开辟空间默认值为-1
                 for (int i = 0; i < capacity + MAX_CONFLIGCT_TIME; i++)
                 {
-                    _fs.Write(FileDictionaryUtils.intBuff, 0, 4);
+                    _stream.Write(FileDictionaryUtils.intBuff, 0, 4);
                 }
 
                 _dataOffset = (capacity + SIZE_COUNT + MAX_CONFLIGCT_TIME) * 4;
@@ -133,12 +178,12 @@ namespace ATRI.Collection
                 _size = 0;
             }
 
-            _fs.Flush();
+            _stream.Flush();
         }
 
         private int ReadInt()
         {
-            _fs.Read(FileDictionaryUtils.intBuff, 0, 4);
+            _stream.Read(FileDictionaryUtils.intBuff, 0, 4);
 
             int* p;
             fixed (byte* bp = FileDictionaryUtils.intBuff)
@@ -159,7 +204,7 @@ namespace ATRI.Collection
 
             *p = val;
 
-            _fs.Write(FileDictionaryUtils.intBuff, 0, 4);
+            _stream.Write(FileDictionaryUtils.intBuff, 0, 4);
         }
 
         private void ResetVal(int offset)
@@ -201,7 +246,7 @@ namespace ATRI.Collection
                     for (int i = 0; i < MAX_CONFLIGCT_TIME; i++)
                     {
                         int ii = index + i;
-                        _fs.Seek((ii + SIZE_COUNT) * 4, SeekOrigin.Begin);
+                        _stream.Seek((ii + SIZE_COUNT) * 4, SeekOrigin.Begin);
                         int addr = ReadInt();
                         int keyLen = 0;
                         var k = GetKey(addr, out keyLen);
@@ -224,11 +269,11 @@ namespace ATRI.Collection
 
         private bool SetVal(int index, int offset)
         {
-            _fs.Seek((index + SIZE_COUNT) * 4, SeekOrigin.Begin);
+            _stream.Seek((index + SIZE_COUNT) * 4, SeekOrigin.Begin);
             int v = ReadInt();
             if (v < 0)
             {
-                _fs.Seek(-4, SeekOrigin.Current);
+                _stream.Seek(-4, SeekOrigin.Current);
                 WriteInt(offset);
                 return true;
             }
@@ -238,10 +283,9 @@ namespace ATRI.Collection
 
         private TKey GetKey(int offset, out int len)
         {
-            TKey value = default(TKey);
-            _fs.Seek(offset + _dataOffset, SeekOrigin.Begin);
+            _stream.Seek(offset + _dataOffset, SeekOrigin.Begin);
             len = ReadInt();
-            return funs.DeserializeKey(_fs, len);
+            return funs.DeserializeKey(_stream, len);
         }
 
         private bool TryGetValue(TKey key, out TValue value, out int ofs, out int index, out int oldValueLen, out int keyLen)
@@ -259,7 +303,7 @@ namespace ATRI.Collection
             for (int i = 0; i < MAX_CONFLIGCT_TIME; i++)
             {
                 int ii = index + i;
-                _fs.Seek((ii + SIZE_COUNT) * 4, SeekOrigin.Begin);
+                _stream.Seek((ii + SIZE_COUNT) * 4, SeekOrigin.Begin);
                 offset = ReadInt();
                 // 没有值
                 if (offset < 0)
@@ -272,7 +316,8 @@ namespace ATRI.Collection
                 {
                     ofs = offset;
                     oldValueLen = ReadInt();
-                    value = funs.DeserializeValue(_fs, oldValueLen);
+                    value = funs.DeserializeValue(_stream, oldValueLen);
+                    AddToCache(key, value);
                     return true;
                 }
             }
@@ -284,6 +329,22 @@ namespace ATRI.Collection
 
         #region public
 
+        //
+        public FileDictionary(SubFileStream subFileStream)
+        {
+            _stream = subFileStream;
+            funs = FileDictionaryDelegateFactory.GetFileDictionaryDelegate<TKey, TValue>();
+            if (funs == null)
+            {
+                throw new Exception(string.Format("Implement IFileDictionaryDelegate<{0}, {1}>", typeof(TKey).Name, typeof(TValue).Name) );
+            }
+
+            _capacity = ReadInt();
+            _size = ReadInt();
+            _dataOffset = (_capacity + SIZE_COUNT + MAX_CONFLIGCT_TIME) * 4;
+        }
+        
+        
         // 文件存在就从文件里面读取 capacity，文件不存在就用capacity new 一个 文件hash表出来
         public FileDictionary(string fileName, int capacity = 1024, bool isClear = false)
         {
@@ -294,7 +355,7 @@ namespace ATRI.Collection
                 fileExit = false;
             }
 
-            _fs = new FileStream(fileName, FileMode.OpenOrCreate, FileAccess.ReadWrite);
+            _stream = new FileStream(fileName, FileMode.OpenOrCreate, FileAccess.ReadWrite);
             _fileName = fileName;
             funs = FileDictionaryDelegateFactory.GetFileDictionaryDelegate<TKey, TValue>();
             if (funs == null)
@@ -319,30 +380,35 @@ namespace ATRI.Collection
 
         public void Flush()
         {
-            _fs.Flush();
+            _stream.Flush();
         }
 
         public void Close()
         {
-            _fs.Flush();
-            _fs.Close();
-            _fs = null;
+            _stream.Flush();
+            _stream.Close();
+            _stream = null;
         }
 
         #endregion
 
         #region interface
 
+        public bool Contains(object key)
+        {
+            throw new NotImplementedException();
+        }
+
         public IEnumerator<KeyValuePair<TKey, TValue>> GetEnumerator()
         {
-            _fs.Seek(_dataOffset, SeekOrigin.Begin);
+            _stream.Seek(_dataOffset, SeekOrigin.Begin);
             
             for (int i = 0; i < _size; i++)
             {
                 int len = ReadInt();
-                var key = funs.DeserializeKey(_fs, len);
+                var key = funs.DeserializeKey(_stream, len);
                 len = ReadInt();
-                var value = funs.DeserializeValue(_fs, len);
+                var value = funs.DeserializeValue(_stream, len);
 
                 yield return new KeyValuePair<TKey, TValue>(key, value);
             }
@@ -354,12 +420,37 @@ namespace ATRI.Collection
             return GetEnumerator();
         }
 
+        public void AddNewValue(TKey key, TValue value)
+        {
+            if (_stream is SubFileStream)
+            {
+                Debug.LogError("subfile stream is readonly");
+                return;
+            }
+            int offset;
+            ++_size;
+            _stream.Seek(4, SeekOrigin.Begin);
+            WriteInt(_size);
+            offset = (int)_stream.Length - _dataOffset;
+                
+            _stream.Seek(offset + _dataOffset, SeekOrigin.Begin);
+            funs.SerializeKey(_stream, key);
+            funs.SerializeValue(_stream, value);
+
+            DoSetVal(key, offset);
+        }
+
         public void Add(TKey key, TValue value)
         {
+            if (_stream is SubFileStream)
+            {
+                Debug.LogError("subfile stream is readonly");
+                return;
+            }
+
             TValue oldValue;
             int offset, index, oldValueLen, keyLen;
             bool hasValue = TryGetValue(key, out oldValue, out offset, out index, out oldValueLen, out keyLen);
-            int len = 0;
             if (hasValue)
             {
                 if (oldValue.Equals(value)) return;
@@ -367,30 +458,30 @@ namespace ATRI.Collection
             int newValueLen = funs.GetValueLen(value);
             if (hasValue && oldValueLen >= newValueLen)
             {
-                _fs.Seek(offset + _dataOffset + 4 + keyLen, SeekOrigin.Begin);
-                funs.SerializeValue(_fs, value);
+                _stream.Seek(offset + _dataOffset + 4 + keyLen, SeekOrigin.Begin);
+                funs.SerializeValue(_stream, value);
             }
             else if (hasValue)
             {
-                offset = (int)_fs.Length - _dataOffset;
+                offset = (int)_stream.Length - _dataOffset;
                 
-                _fs.Seek((index + SIZE_COUNT) * 4, SeekOrigin.Begin);
+                _stream.Seek((index + SIZE_COUNT) * 4, SeekOrigin.Begin);
                 WriteInt(offset);
                 
-                _fs.Seek(offset + _dataOffset, SeekOrigin.Begin);
-                funs.SerializeKey(_fs, key);
-                funs.SerializeValue(_fs, value);
+                _stream.Seek(offset + _dataOffset, SeekOrigin.Begin);
+                funs.SerializeKey(_stream, key);
+                funs.SerializeValue(_stream, value);
             }
             else
             {
                 ++_size;
-                _fs.Seek(4, SeekOrigin.Begin);
+                _stream.Seek(4, SeekOrigin.Begin);
                 WriteInt(_size);
-                offset = (int)_fs.Length - _dataOffset;
+                offset = (int)_stream.Length - _dataOffset;
                 
-                _fs.Seek(offset + _dataOffset, SeekOrigin.Begin);
-                funs.SerializeKey(_fs, key);
-                funs.SerializeValue(_fs, value);
+                _stream.Seek(offset + _dataOffset, SeekOrigin.Begin);
+                funs.SerializeKey(_stream, key);
+                funs.SerializeValue(_stream, value);
 
                 DoSetVal(key, offset);
             }
@@ -411,12 +502,12 @@ namespace ATRI.Collection
 
         public void Clear()
         {
-            _fs.Close();
+            _stream.Close();
             File.Delete(_fileName);
             _dataOffset = 0;
             _size = 0;
 
-            _fs = new FileStream(_fileName, FileMode.OpenOrCreate, FileAccess.ReadWrite);
+            _stream = new FileStream(_fileName, FileMode.OpenOrCreate, FileAccess.ReadWrite);
             var capacity = _capacity;
             _capacity = 0;
             Resize(capacity);
@@ -437,14 +528,28 @@ namespace ATRI.Collection
             return Remove(item.Key);
         }
 
+        public void CopyTo(Array array, int index)
+        {
+            throw new NotImplementedException();
+        }
+
         public int Count
         {
             get { return _size; }
         }
 
+        public bool IsSynchronized { get; }
+        public object SyncRoot { get; }
+
         public bool IsReadOnly
         {
             get { return false; }
+        }
+
+        public object this[object key]
+        {
+            get => throw new NotImplementedException();
+            set => throw new NotImplementedException();
         }
 
         public bool ContainsKey(TKey key)
@@ -461,10 +566,10 @@ namespace ATRI.Collection
             bool hasValue = TryGetValue(key, out oldValue, out offset, out index, out oldLen, out keyLen);
             if (hasValue)
             {
-                _fs.Seek((index + SIZE_COUNT) * 4, SeekOrigin.Begin);
+                _stream.Seek((index + SIZE_COUNT) * 4, SeekOrigin.Begin);
                 WriteInt(-1);
                 _size--;
-                _fs.Seek(4, SeekOrigin.Begin);
+                _stream.Seek(4, SeekOrigin.Begin);
                 WriteInt(_size);
             }
 
@@ -473,6 +578,10 @@ namespace ATRI.Collection
 
         public bool TryGetValue(TKey key, out TValue value)
         {
+            // LRU cahce
+            bool ret = TryGetCache(key, out value);
+            if (ret) return ret;
+
             int ofs, index, oldLen, keyLen;
             return TryGetValue(key, out value, out ofs, out index, out oldLen, out keyLen);
         }
@@ -496,14 +605,14 @@ namespace ATRI.Collection
         public Dictionary<TKey, TValue> ToDictionary()
         {
             Dictionary<TKey, TValue> result = new Dictionary<TKey, TValue>(Count);
-            _fs.Seek(_dataOffset, SeekOrigin.Begin);
+            _stream.Seek(_dataOffset, SeekOrigin.Begin);
             
             for (int i = 0; i < _size; i++)
             {
                 int len = ReadInt();
-                var key = funs.DeserializeKey(_fs, len);
+                var key = funs.DeserializeKey(_stream, len);
                 len = ReadInt();
-                var value = funs.DeserializeValue(_fs, len);
+                var value = funs.DeserializeValue(_stream, len);
 
                 result.Add(key, value);
             }
@@ -522,5 +631,25 @@ namespace ATRI.Collection
         }
 
         #endregion
+
+        private void ReleaseUnmanagedResources()
+        {
+            // TODO release unmanaged resources here
+        }
+
+        private void Dispose(bool disposing)
+        {
+            ReleaseUnmanagedResources();
+            if (disposing)
+            {
+                _stream?.Dispose();
+            }
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
     }
 }

@@ -10,6 +10,20 @@
 
 
 ### 🚀 使用范例
+
+编辑器下创建字典的文件
+```
+    var fileDictionary = new FileDictionary<int, string>("test.bin", 1024, true);
+    // 添加数据
+    for (int i = 0; i <= 100; i++)
+    {
+        fileDictionary[i] = "test" + i.ToString();
+    }
+    // 
+    fileDictionary.Close()
+```
+
+runtime下读取文件
 ```
     var fileDictionary = new FileDictionary<int, string>("test.bin", 1024);
     // 添加
@@ -38,13 +52,76 @@
     var dict = fileDictionary.ToDictionary();
 ```
 
+### 多字典查询
+```
+FileDictionary<string, bool> f = new FileDictionary<string, bool>("test.bin", 1024, true);
+for (int i = 0; i < 10000; i++)
+{
+    f.Add(i.ToString(), i % 2 == 0);
+}
+f.Dispose();
+
+FileDictionary<string, bool> f2 = new FileDictionary<string, bool>("test2.bin", 1024, true);
+for (int i = 0; i < 10000; i++)
+{
+    f2.Add(i.ToString(), i % 2 == 0);
+}
+f2.Dispose();
+
+FileDictionary<int, string> f3 = new FileDictionary<int, string>("test3.bin", 1024, true);
+for (int i = 0; i < 10000; i++)
+{
+    f3.Add(i, i.ToString());
+}
+f3.Dispose();
+
+FileDB fdb = new FileDB("file.fdb");
+// 编辑器下直接合并为一个大DB
+fdb.MergeEditor("test.bin", "test2.bin", "test3.bin");
+
+// 运行中合并FileDictionary 为DB，这样可以避免热更的时候更出去过大的文件
+fdb.MergeRuntime("test.bin", "test2.bin", "test3.bin");
+
+bool v;
+if (fdb.TryGetValueByTableName("test", "0", out v))
+{
+    print("test success:" + v);
+}
+else
+{
+    print("test fail");
+}
+
+if (fdb.TryGetValueByTableName("test2", "3", out v))
+{
+    print("test2 success:" + v);
+}
+else
+{
+    print("test2 fail");
+}
+
+string strV;
+if (fdb.TryGetValueByTableName("test3", 100, out strV))
+{
+    print("test3 success:" + strV);
+}
+else
+{
+    print("test3 fail");
+}
+```
+
 
 ### 📱 目前库里面支持的类型有 
 - <int,string>
+- <int, bool>
 - <int, int>
 - <int, string[]>
 - <int, byte[]>
-- <string, string>
+- <string,string>
+- <string, bool>
+- <string, int>
 - <string, string[]>
 - <string, byte[]>
 

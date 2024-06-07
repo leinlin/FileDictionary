@@ -1,10 +1,12 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using UnityEngine.Experimental.XR;
 
 namespace ATRI.Collection
 {
-    public class CRC32
+    public static class CRC32
     {
         private static readonly uint[] table;
 
@@ -47,11 +49,13 @@ namespace ATRI.Collection
     {
         public static byte[] intBuff = new byte[4];
 
-        public const int MOVE_BUFF_SIZE = 4096;
+        public const int MOVE_BUFF_SIZE = 4 * 4096;
 
         public static byte[] moveTempBuff = new byte[MOVE_BUFF_SIZE];
 
-        public static byte[] SerializeTempBuff = new byte[65536];
+        public const int SERIALIZE_BUFF_SIZE = 4096 * 4;
+        
+        public static byte[] SerializeTempBuff = new byte[SERIALIZE_BUFF_SIZE];
         
         public static void WriteInt(Stream stream, int val)
         {
@@ -110,6 +114,32 @@ namespace ATRI.Collection
         }
         #endregion
         
+        #region bool 
+
+        public static bool DeserializeBool(Stream stream, int len)
+        {
+            byte[] intBuff = FileDictionaryUtils.intBuff;
+            stream.Read(intBuff, 0, len);
+            
+            fixed (byte* b = intBuff)
+            {
+                return *b > (byte)0;
+            }
+        }
+
+        public static void SerializeBool(Stream stream, bool value)
+        {
+            WriteInt(stream, 1);
+
+            byte[] intBuff = FileDictionaryUtils.intBuff;
+            fixed (byte* b = intBuff)
+            {
+                *b = value ? (byte)1: (byte)0;
+            }
+            stream.Write(intBuff, 0, 1);
+        }
+        #endregion
+
         #region byte[]
         public static byte[] DeserializeBytes(Stream stream, int len)
         {
@@ -266,40 +296,38 @@ namespace ATRI.Collection
             FileDictionaryUtils.SerializeInt(stream, value);
         }
     }
-
-    public class StringBytesFileDictionaryDelegate : IFileDictionaryDelegate<string, byte[]>
+    
+    public class IntBoolFileDictionaryDelegate : IFileDictionaryDelegate<int, bool>
     {
-        public static StringBytesFileDictionaryDelegate Default = new StringBytesFileDictionaryDelegate();
-
-        public uint GetHashCode(string key)
+        public static IntBoolFileDictionaryDelegate Default = new IntBoolFileDictionaryDelegate();
+        public uint GetHashCode(int key)
         {
-            var data = System.Text.Encoding.UTF8.GetBytes(key);
-            return CRC32.Compute(data);
+            return (uint)key * 2654435761U;
         }
 
-        public int GetValueLen(byte[] value)
+        public bool DeserializeValue(Stream stream, int len)
         {
-            return value.Length;
+            return FileDictionaryUtils.DeserializeBool(stream, len);
         }
 
-        public byte[] DeserializeValue(Stream stream, int len)
+        public int GetValueLen(bool value)
         {
-            return FileDictionaryUtils.DeserializeBytes(stream, len);
+            return 1;
         }
 
-        public void SerializeValue(Stream stream, byte[] value)
+        public void SerializeValue(Stream stream, bool value)
         {
-            FileDictionaryUtils.SerializeBytes(stream, value);
+            FileDictionaryUtils.SerializeBool(stream, value);
         }
 
-        string IFileDictionaryDelegate<string, byte[]>.DeserializeKey(Stream stream, int len)
+        public int DeserializeKey(Stream stream, int len)
         {
-            return FileDictionaryUtils.DeserializeString(stream, len);
+            return FileDictionaryUtils.DeserializeInt(stream, len);
         }
 
-        public void SerializeKey(Stream stream, string value)
+        public void SerializeKey(Stream stream, int value)
         {
-            FileDictionaryUtils.SerializeString(stream, value);
+            FileDictionaryUtils.SerializeInt(stream, value);
         }
         
     }
@@ -339,42 +367,6 @@ namespace ATRI.Collection
         }
     }
     
-    public class StringStringFileDictionaryDelegate : IFileDictionaryDelegate<string, string>
-    {
-        public static StringStringFileDictionaryDelegate Default = new StringStringFileDictionaryDelegate();
-        
-        public uint GetHashCode(string key)
-        {
-            var data = System.Text.Encoding.UTF8.GetBytes(key);
-            return CRC32.Compute(data);
-        }
-
-        public int GetValueLen(string value)
-        {
-            return System.Text.Encoding.UTF8.GetByteCount(value);
-        }
-
-        public string DeserializeValue(Stream stream, int len)
-        {
-            return FileDictionaryUtils.DeserializeString(stream, len);
-        }
-        
-        public void SerializeValue(Stream stream, string value)
-        {
-            FileDictionaryUtils.SerializeString(stream, value);
-        }
-
-        public string DeserializeKey(Stream stream, int len)
-        {
-            return FileDictionaryUtils.DeserializeString(stream, len);
-        }
-
-        public void SerializeKey(Stream stream, string value)
-        {
-            FileDictionaryUtils.SerializeString(stream, value);
-        }
-    }
-
     public class IntIntFileDictionaryDelegate : IFileDictionaryDelegate<int, int>
     {
         public static IntIntFileDictionaryDelegate Default = new IntIntFileDictionaryDelegate();
@@ -409,7 +401,7 @@ namespace ATRI.Collection
         }
         
     }
-    
+
     public class IntStringArrayFileDictionaryDelegate : IFileDictionaryDelegate<int, string[]>
     {
         public static IntStringArrayFileDictionaryDelegate Default = new IntStringArrayFileDictionaryDelegate();
@@ -449,6 +441,153 @@ namespace ATRI.Collection
             FileDictionaryUtils.SerializeInt(stream, value);
         }
         
+    }
+    
+    public class StringBytesFileDictionaryDelegate : IFileDictionaryDelegate<string, byte[]>
+    {
+        public static StringBytesFileDictionaryDelegate Default = new StringBytesFileDictionaryDelegate();
+
+        public uint GetHashCode(string key)
+        {
+            var data = System.Text.Encoding.UTF8.GetBytes(key);
+            return CRC32.Compute(data);
+        }
+
+        public int GetValueLen(byte[] value)
+        {
+            return value.Length;
+        }
+
+        public byte[] DeserializeValue(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeBytes(stream, len);
+        }
+
+        public void SerializeValue(Stream stream, byte[] value)
+        {
+            FileDictionaryUtils.SerializeBytes(stream, value);
+        }
+
+        public string DeserializeKey(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeString(stream, len);
+        }
+
+        public void SerializeKey(Stream stream, string value)
+        {
+            FileDictionaryUtils.SerializeString(stream, value);
+        }
+        
+    }
+    
+    public class StringIntFileDictionaryDelegate : IFileDictionaryDelegate<string, int>
+    {
+        public static StringIntFileDictionaryDelegate Default = new StringIntFileDictionaryDelegate();
+
+        public uint GetHashCode(string key)
+        {
+            var data = System.Text.Encoding.UTF8.GetBytes(key);
+            return CRC32.Compute(data);
+        }
+
+        public int GetValueLen(int value)
+        {
+            return 4;
+        }
+
+        public int DeserializeValue(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeInt(stream, len);
+        }
+
+        public void SerializeValue(Stream stream, int value)
+        {
+            FileDictionaryUtils.SerializeInt(stream, value);
+        }
+
+        public string DeserializeKey(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeString(stream, len);
+        }
+
+        public void SerializeKey(Stream stream, string value)
+        {
+            FileDictionaryUtils.SerializeString(stream, value);
+        }
+        
+    }
+    
+    public class StringBoolFileDictionaryDelegate : IFileDictionaryDelegate<string, bool>
+    {
+        public static StringBoolFileDictionaryDelegate Default = new StringBoolFileDictionaryDelegate();
+
+        public uint GetHashCode(string key)
+        {
+            var data = System.Text.Encoding.UTF8.GetBytes(key);
+            return CRC32.Compute(data);
+        }
+
+        public int GetValueLen(bool value)
+        {
+            return 1;
+        }
+
+        public bool DeserializeValue(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeBool(stream, len);
+        }
+
+        public void SerializeValue(Stream stream, bool value)
+        {
+            FileDictionaryUtils.SerializeBool(stream, value);
+        }
+
+        public string DeserializeKey(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeString(stream, len);
+        }
+
+        public void SerializeKey(Stream stream, string value)
+        {
+            FileDictionaryUtils.SerializeString(stream, value);
+        }
+        
+    }
+    
+    public class StringStringFileDictionaryDelegate : IFileDictionaryDelegate<string, string>
+    {
+        public static StringStringFileDictionaryDelegate Default = new StringStringFileDictionaryDelegate();
+        
+        public uint GetHashCode(string key)
+        {
+            var data = System.Text.Encoding.UTF8.GetBytes(key);
+            return CRC32.Compute(data);
+        }
+
+        public int GetValueLen(string value)
+        {
+            return System.Text.Encoding.UTF8.GetByteCount(value);
+        }
+
+        public string DeserializeValue(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeString(stream, len);
+        }
+        
+        public void SerializeValue(Stream stream, string value)
+        {
+            FileDictionaryUtils.SerializeString(stream, value);
+        }
+
+        public string DeserializeKey(Stream stream, int len)
+        {
+            return FileDictionaryUtils.DeserializeString(stream, len);
+        }
+
+        public void SerializeKey(Stream stream, string value)
+        {
+            FileDictionaryUtils.SerializeString(stream, value);
+        }
     }
     
     public class StringStringArrayFileDictionaryDelegate : IFileDictionaryDelegate<string, string[]>
@@ -492,13 +631,10 @@ namespace ATRI.Collection
         }
     }
     
-    public class FileDictionaryDelegateFactory
+    public static class FileDictionaryDelegateFactory
     {
         public static IFileDictionaryDelegate<TKey, TValue> GetFileDictionaryDelegate<TKey, TValue>()
         {
-            if (typeof(TKey) == typeof(int) && typeof(TValue) == typeof(byte[]))
-                return (IFileDictionaryDelegate<TKey, TValue>)IntBytesFileDictionaryDelegate.Default;
-            
             if (typeof(TKey) == typeof(string) && typeof(TValue) == typeof(byte[]))
                 return (IFileDictionaryDelegate<TKey, TValue>)StringBytesFileDictionaryDelegate.Default;
             
@@ -507,6 +643,15 @@ namespace ATRI.Collection
             
             if (typeof(TKey) == typeof(string) && typeof(TValue) == typeof(string[]))
                 return (IFileDictionaryDelegate<TKey, TValue>)StringStringArrayFileDictionaryDelegate.Default;
+
+            if (typeof(TKey) == typeof(string) && typeof(TValue) == typeof(int))
+                return (IFileDictionaryDelegate<TKey, TValue>)StringIntFileDictionaryDelegate.Default;
+            
+            if (typeof(TKey) == typeof(string) && typeof(TValue) == typeof(bool))
+                return (IFileDictionaryDelegate<TKey, TValue>)StringBoolFileDictionaryDelegate.Default;
+            
+            if (typeof(TKey) == typeof(int) && typeof(TValue) == typeof(byte[]))
+                return (IFileDictionaryDelegate<TKey, TValue>)IntBytesFileDictionaryDelegate.Default;
 
             if (typeof(TKey) == typeof(int) && typeof(TValue) == typeof(string))
                 return (IFileDictionaryDelegate<TKey, TValue>)IntStringFileDictionaryDelegate.Default;
@@ -517,6 +662,8 @@ namespace ATRI.Collection
             if (typeof(TKey) == typeof(int) && typeof(TValue) == typeof(int))
                 return (IFileDictionaryDelegate<TKey, TValue>)IntIntFileDictionaryDelegate.Default;
 
+            if (typeof(TKey) == typeof(int) && typeof(TValue) == typeof(bool))
+                return (IFileDictionaryDelegate<TKey, TValue>)IntBoolFileDictionaryDelegate.Default;
             
             return null;
         }
